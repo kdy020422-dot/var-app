@@ -68,6 +68,34 @@ def load_portfolio(tickers, start, end):
     return prices
 
 # ─────────────────────────────────────────────
+# 3-1. 통화 자동 감지 함수
+# ─────────────────────────────────────────────
+def get_currency_symbol(tickers: list) -> str:
+    """
+    종목 티커 목록 기반 통화 기호 자동 감지
+    - .KS / .KQ → 한국 주식 → ₩
+    - 그 외 → 미국 주식 → $
+    - 혼합 포트폴리오 → '혼합'
+    """
+    kr = [t for t in tickers if t.endswith(".KS") or t.endswith(".KQ")]
+    us = [t for t in tickers if not t.endswith(".KS") and not t.endswith(".KQ")]
+    if kr and not us:
+        return "₩"
+    elif us and not kr:
+        return "$"
+    else:
+        return "혼합"
+
+def fmt_money(value: float, symbol: str) -> str:
+    """통화 기호 + 금액 포맷 반환"""
+    if symbol == "$":
+        return f"${value:,.2f}"
+    elif symbol == "₩":
+        return f"₩{value:,.0f}"
+    else:
+        return f"{value:,.2f} (혼합통화)"
+
+# ─────────────────────────────────────────────
 # 4. VaR 계산 함수 (단일 종목용)
 # ─────────────────────────────────────────────
 def calc_parametric_var(returns, conf, days, inv):
@@ -327,6 +355,9 @@ with tab2:
         qty_arr = np.array([qty_list[tickers_list.index(t)] for t in valid_tickers])
         prices_df = prices_df[valid_tickers]
 
+        # 통화 기호 자동 감지
+        currency = get_currency_symbol(valid_tickers)
+
         # 현재 주가 기반 종목별 평가 금액 계산
         latest_prices = prices_df.iloc[-1].values
         asset_values  = latest_prices * qty_arr          # 종목별 평가금액
@@ -339,18 +370,19 @@ with tab2:
         # ── 포트폴리오 요약 ─────────────────────────
         st.markdown("---")
         st.subheader("💼 포트폴리오 구성 요약")
+        st.caption(f"💱 감지된 통화: **{'달러 ($)' if currency == '$' else '원화 (₩)' if currency == '₩' else '혼합 통화'}**")
 
         summary_df = pd.DataFrame({
             "종목": valid_tickers,
             "수량": qty_arr,
-            "현재 주가": latest_prices,
-            "평가 금액": asset_values,
+            f"현재 주가 ({currency})": [fmt_money(p, currency) for p in latest_prices],
+            f"평가 금액 ({currency})": [fmt_money(v, currency) for v in asset_values],
             "비중 (%)": (weights * 100).round(2)
         })
         st.dataframe(summary_df.set_index("종목"), use_container_width=True)
 
         m1, m2 = st.columns(2)
-        m1.metric("포트폴리오 총 평가금액", f"{total_value:,.0f}")
+        m1.metric("포트폴리오 총 평가금액", fmt_money(total_value, currency))
         m2.metric("종목 수", f"{len(valid_tickers)} 개")
 
         # ── 파이차트: 포트폴리오 구성 ──────────────
@@ -396,15 +428,15 @@ with tab2:
         r1, r2, r3 = st.columns(3)
         with r1:
             st.error("**모수적 포트폴리오 VaR**")
-            st.markdown(f"### {port_p_var:,.0f}")
+            st.markdown(f"### {fmt_money(port_p_var, currency)}")
             st.caption("공분산 행렬 + 상관관계 반영")
         with r2:
             st.error("**역사적 포트폴리오 VaR**")
-            st.markdown(f"### {port_h_var:,.0f}")
+            st.markdown(f"### {fmt_money(port_h_var, currency)}")
             st.caption("과거 포트폴리오 수익률 직접 계산")
         with r3:
             st.error("**몬테카를로 포트폴리오 VaR**")
-            st.markdown(f"### {port_mc_var_amt:,.0f}")
+            st.markdown(f"### {fmt_money(port_mc_var_amt, currency)}")
             st.caption("Cholesky 분해로 상관관계 반영")
 
         st.info(f"💡 {confidence_level*100:.0f}% 확률로 다음 {holding_period}일간 포트폴리오 최대 손실이 위 금액을 넘지 않을 것으로 추정됩니다.")
@@ -422,9 +454,9 @@ with tab2:
         diversification_benefit = sum_individual - port_p_var
 
         d1, d2, d3 = st.columns(3)
-        d1.metric("개별 VaR 단순 합계", f"{sum_individual:,.0f}")
-        d2.metric("포트폴리오 VaR (상관관계 반영)", f"{port_p_var:,.0f}")
-        d3.metric("🎯 분산 효과 (절감액)", f"{diversification_benefit:,.0f}",
+        d1.metric("개별 VaR 단순 합계", fmt_money(sum_individual, currency))
+        d2.metric("포트폴리오 VaR (상관관계 반영)", fmt_money(port_p_var, currency))
+        d3.metric("🎯 분산 효과 (절감액)", fmt_money(diversification_benefit, currency),
                   delta=f"-{diversification_benefit/sum_individual*100:.1f}%")
 
         st.caption("💡 분산 효과 = 개별 VaR 합계 - 포트폴리오 VaR. 상관관계가 낮을수록 절감액이 커집니다.")
@@ -438,7 +470,7 @@ with tab2:
 
         comp_df = pd.DataFrame({
             "종목": valid_tickers,
-            "기여 VaR": comp_var_amts,
+            f"기여 VaR ({currency})": [fmt_money(v, currency) for v in comp_var_amts],
             "기여 비율 (%)": (comp_var_amts / port_p_var * 100).round(2)
         }).set_index("종목")
         st.dataframe(comp_df, use_container_width=True)
@@ -447,7 +479,7 @@ with tab2:
             x=valid_tickers,
             y=comp_var_amts,
             marker_color=px.colors.qualitative.Set2[:len(valid_tickers)],
-            text=[f"{v:,.0f}" for v in comp_var_amts],
+            text=[fmt_money(v, currency) for v in comp_var_amts],
             textposition="outside"
         ))
         fig_comp.update_layout(title="종목별 포트폴리오 VaR 기여액",
