@@ -134,17 +134,13 @@ def calc_portfolio_montecarlo_var(returns_df, weights, conf, days, iterations=10
         L = np.linalg.cholesky(cov)
 
     np.random.seed(42)
-    # shape: (days, n, iterations)
-    Z = np.random.normal(0, 1, (days, n, iterations))
-    # Cholesky 적용: 상관관계 반영된 난수
-    corr_Z = np.einsum('ij,jki->ki', L, Z.transpose(1, 0, 2))  # (n, iterations)
-
-    # 각 종목별 다기간 로그수익률
+    # 각 종목별 다기간 로그수익률 (Cholesky로 상관관계 반영)
     log_paths = np.zeros((n, iterations))
+    drift = mu_vec[:, None] - 0.5 * np.diag(cov)[:, None]  # shape: (n, 1)
     for t in range(days):
-        Z_t = np.random.normal(0, 1, (n, iterations))
-        corr_Z_t = L @ Z_t
-        log_paths += (mu_vec[:, None] - 0.5 * np.diag(cov)[:, None]) + corr_Z_t
+        Z_t = np.random.normal(0, 1, (n, iterations))  # shape: (n, iterations)
+        corr_Z_t = L @ Z_t                              # shape: (n, iterations)
+        log_paths += drift + corr_Z_t
 
     asset_returns = np.exp(log_paths) - 1  # shape: (n, iterations)
     port_returns  = np.dot(weights, asset_returns)  # shape: (iterations,)
