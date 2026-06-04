@@ -507,3 +507,81 @@ with tab2:
                               yaxis_title="시나리오 횟수")
         st.plotly_chart(fig_mc, use_container_width=True)
 
+
+        # ── 환율 변환기 ─────────────────────────────
+        st.markdown("---")
+        st.subheader("💱 실시간 환율 변환기 (USD ↔ KRW)")
+
+        @st.cache_data(ttl=600)
+        def get_exchange_rate():
+            """yfinance로 실시간 USD/KRW 환율 조회"""
+            try:
+                fx = yf.Ticker("KRW=X")
+                rate = fx.fast_info["last_price"]
+                return float(rate)
+            except Exception:
+                return None
+
+        # 환율 조회 버튼
+        if "exchange_rate" not in st.session_state:
+            st.session_state.exchange_rate = None
+        if "exchange_rate_time" not in st.session_state:
+            st.session_state.exchange_rate_time = None
+
+        fetch_fx_btn = st.button("🔄 실시간 환율 불러오기", type="primary")
+
+        if fetch_fx_btn:
+            with st.spinner("환율 조회 중..."):
+                rate = get_exchange_rate()
+            if rate:
+                st.session_state.exchange_rate = rate
+                st.session_state.exchange_rate_time = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                st.error("❌ 환율 조회 실패. 잠시 후 다시 시도해 주세요.")
+
+        if st.session_state.exchange_rate:
+            rate = st.session_state.exchange_rate
+            st.success(f"✅ 현재 환율: **1 USD = {rate:,.2f} KRW** (조회: {st.session_state.exchange_rate_time})")
+
+            # 변환 방향 선택
+            fx_col1, fx_col2 = st.columns(2)
+            with fx_col1:
+                convert_direction = st.radio("변환 방향", ["USD → KRW", "KRW → USD"], horizontal=True)
+            with fx_col2:
+                if convert_direction == "USD → KRW":
+                    input_amount = st.number_input("금액 입력 (USD $)", min_value=0.0, value=1000.0, step=100.0, format="%.2f")
+                else:
+                    input_amount = st.number_input("금액 입력 (KRW ₩)", min_value=0.0, value=1_000_000.0, step=100_000.0, format="%.0f")
+
+            convert_btn = st.button("💰 변환하기")
+            if convert_btn:
+                if convert_direction == "USD → KRW":
+                    result_amt = input_amount * rate
+                    st.success(f"### \${input_amount:,.2f}  →  ₩{result_amt:,.0f}")
+                else:
+                    result_amt = input_amount / rate
+                    st.success(f"### ₩{input_amount:,.0f}  →  \${result_amt:,.2f}")
+
+            # VaR 결과 환율 변환 테이블
+            st.markdown("#### 📊 VaR 결과 통화 변환")
+            var_results = {"모수적 VaR": port_p_var, "역사적 VaR": port_h_var, "몬테카를로 VaR": port_mc_var_amt}
+
+            if currency == "$":
+                conv_df = pd.DataFrame({
+                    "방법론": list(var_results.keys()),
+                    "원래 VaR (USD $)": [f"${v:,.2f}" for v in var_results.values()],
+                    "변환 VaR (KRW ₩)": [f"₩{v * rate:,.0f}" for v in var_results.values()],
+                })
+            elif currency == "₩":
+                conv_df = pd.DataFrame({
+                    "방법론": list(var_results.keys()),
+                    "원래 VaR (KRW ₩)": [f"₩{v:,.0f}" for v in var_results.values()],
+                    "변환 VaR (USD $)": [f"${v / rate:,.2f}" for v in var_results.values()],
+                })
+            else:
+                conv_df = None
+                st.warning("혼합 통화 포트폴리오는 VaR 환율 변환을 지원하지 않습니다.")
+
+            if conv_df is not None:
+                st.dataframe(conv_df.set_index("방법론"), use_container_width=True)
+                st.caption(f"💡 적용 환율: 1 USD = {rate:,.2f} KRW")
